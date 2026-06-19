@@ -54,8 +54,8 @@ FORMAT DE REPONSE ATTENDU :
         Returns:
             Liste de documents pertinents avec metadonnees
         """
-        # Augmenter le nombre de resultats pour avoir plus de chances de trouver le bon
-        n_results = max(self.settings.top_k_retrieval, 10)
+        # Recuperer plus de resultats pour avoir le choix, mais on filtrera apres
+        n_results = 15
         results = self.chroma.query(query, n_results=n_results)
         
         documents = []
@@ -88,6 +88,9 @@ FORMAT DE REPONSE ATTENDU :
     def build_context(self, documents: List[Dict]) -> str:
         """Construit le contexte formate pour le LLM.
         
+        Limite le contexte pour ne pas depasser la limite de tokens Groq.
+        Environ 800 tokens = ~3200 caracteres pour le contexte.
+        
         Args:
             documents: Documents recuperes
             
@@ -97,8 +100,14 @@ FORMAT DE REPONSE ATTENDU :
         if not documents:
             return "AUCUN DOCUMENT PERTINENT TROUVE."
         
+        # Limiter le nombre de chunks dans le contexte pour respecter la limite TPM
+        MAX_CONTEXT_CHARS = 3000  # ~750 tokens
+        MAX_CHUNKS = 5
+        
         context_parts = []
-        for i, doc in enumerate(documents, 1):
+        total_chars = 0
+        
+        for i, doc in enumerate(documents[:MAX_CHUNKS], 1):
             meta = doc["metadata"]
             source = meta.get("source", "Document inconnu")
             doc_type = meta.get("document_type", "")
@@ -120,9 +129,18 @@ FORMAT DE REPONSE ATTENDU :
             
             reference = " | ".join(ref_parts)
             
-            context_parts.append(
-                f"--- EXTRAIT {i} [{reference}] ---\n{doc['content']}\n"
-            )
+            # Tronquer le contenu si necessaire pour rester dans la limite
+            content = doc['content']
+            max_content_len = max(200, (MAX_CONTEXT_CHARS - total_chars) // (MAX_CHUNKS - i + 1) - 100)
+            if len(content) > max_content_len:
+                content = content[:max_content_len] + "..."
+            
+            chunk_text = f"--- EXTRAIT {i} [{reference}] ---\n{content}\n"
+            total_chars += len(chunk_text)
+            context_parts.append(chunk_text)
+            
+            if total_chars >= MAX_CONTEXT_CHARS:
+                break
         
         return "\n".join(context_parts)
 
@@ -149,9 +167,9 @@ FORMAT DE REPONSE ATTENDU :
             {"role": "system", "content": self.SYSTEM_PROMPT},
         ]
         
-        # Ajout de l'historique (limite aux 6 derniers messages)
+        # Ajout de l'historique (limite aux 4 derniers messages pour economiser les tokens)
         if conversation_history:
-            messages.extend(conversation_history[-6:])
+            messages.extend(conversation_history[-4:])
         
         # Ajout du contexte et de la question
         user_message = f"""CONTEXTE JURIDIQUE :
@@ -164,6 +182,10 @@ Reponds en te basant STRICTEMENT sur le contexte fourni ci-dessus.
 N'oublie pas de citer le NOM COMPLET DU DOCUMENT pour chaque affirmation."""
         
         messages.append({"role": "user", "content": user_message})
+        
+        # Log de la taille approximative
+        total_chars = sum(len(m["content"]) for m in messages)
+        logger.info(f"Taille approximative du prompt: {total_chars} chars (~{total_chars//4} tokens)")
         
         # Generation
         logger.info(f"Generation de la reponse pour: {query[:80]}...")
