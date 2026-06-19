@@ -1,4 +1,4 @@
-"""Configuration centralisée de l'application."""
+"""Configuration centralisee de l'application."""
 
 import os
 from functools import lru_cache
@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    """Paramètres de l'application chargés depuis les variables d'environnement."""
+    """Parametres de l'application charges depuis les variables d'environnement."""
 
     # === Groq ===
     groq_api_key: str
@@ -15,10 +15,10 @@ class Settings(BaseSettings):
     groq_max_tokens: int = 4096
     groq_timeout: float = 60.0
 
-    # === ChromaDB Cloud ===
-    chroma_api_key: str
-    chroma_tenant: str
-    chroma_database: str
+    # === ChromaDB Cloud (optionnel, fallback local si vide) ===
+    chroma_api_key: str = ""
+    chroma_tenant: str = ""
+    chroma_database: str = ""
     chroma_collection_name: str = "legal_documents"
 
     # === RAG ===
@@ -44,5 +44,5 @@ class Settings(BaseSettings):
 
 @lru_cache()
 def get_settings() -> Settings:
-    """Retourne une instance singleton des paramètres."""
+    """Retourne une instance singleton des parametres."""
     return Settings()
