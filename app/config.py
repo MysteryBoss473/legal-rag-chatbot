@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     # === RAG ===
     chunk_size: int = 800
     chunk_overlap: int = 150
-    top_k_retrieval: int = 5
-    similarity_threshold: float = 0.35
+    top_k_retrieval: int = 10  # Augmente pour plus de resultats
+    similarity_threshold: float = 2.5  # Distance L2 max (tres permissif)
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     # === App ===

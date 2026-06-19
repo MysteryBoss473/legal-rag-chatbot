@@ -51,8 +51,11 @@ class LegalChunker:
         Returns:
             Liste de chunks avec metadonnees enrichies
         """
+        # Extraire le type de document du nom du fichier
+        doc_type = self._extract_doc_type(source)
+        
         # Etape 1 : Decouper par articles si possible
-        article_splits = self._split_by_articles(text)
+        article_splits = self._split_by_articles(text, source, doc_type)
         
         chunks = []
         chunk_idx = 0
@@ -86,13 +89,45 @@ class LegalChunker:
         
         return chunks
 
-    def _split_by_articles(self, text: str) -> List[tuple]:
+    def _extract_doc_type(self, source: str) -> str:
+        """Extrait le type de document du nom du fichier."""
+        source_lower = source.lower()
+        
+        if "code" in source_lower:
+            return "Code"
+        elif "loi" in source_lower or "law" in source_lower:
+            return "Loi"
+        elif "decret" in source_lower or "decret" in source_lower:
+            return "Decret"
+        elif "arrete" in source_lower or "arrete" in source_lower:
+            return "Arrete"
+        elif "ordonnance" in source_lower:
+            return "Ordonnance"
+        elif "constitution" in source_lower:
+            return "Constitution"
+        elif "trait" in source_lower:
+            return "Traite"
+        elif "convention" in source_lower:
+            return "Convention"
+        else:
+            return "Document"
+
+    def _split_by_articles(self, text: str, source: str, doc_type: str) -> List[tuple]:
         """Decoupe le texte par articles juridiques."""
         matches = list(self.ARTICLE_PATTERN.finditer(text))
         
         if len(matches) < 2:
-            # Pas assez d'articles, retourner le texte entier
-            return [(text, {"type": "section", "article": "global"})]
+            # Pas assez d'articles, retourner le texte entier comme un seul chunk
+            # avec le nom du document en contexte
+            return [(
+                text, 
+                {
+                    "type": "document_complet",
+                    "article": "global",
+                    "document_type": doc_type,
+                    "document_name": source,
+                }
+            )]
         
         splits = []
         for i, match in enumerate(matches):
@@ -108,6 +143,8 @@ class LegalChunker:
                 "type": "article",
                 "article": article_num,
                 "section": section,
+                "document_type": doc_type,
+                "document_name": source,
             }))
         
         return splits
