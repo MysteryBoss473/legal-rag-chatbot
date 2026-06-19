@@ -1,7 +1,7 @@
 """Application principale FastAPI - Legal RAG Chatbot.
 
 API REST + interface web pour consulter les documents juridiques
-via un système RAG strict avec l'API Groq et ChromaDB Cloud.
+via un systeme RAG strict avec l'API Groq et ChromaDB (stockage local).
 """
 
 import os
@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.rag_engine import LegalRAGEngine
 from app.chroma_client import get_chroma_client
-from app.indexer import index_documents
 
 # Configuration du logging
 logging.basicConfig(
@@ -27,7 +26,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# === Modèles Pydantic ===
+# === Modeles Pydantic ===
 
 
 class ChatMessage(BaseModel):
@@ -37,19 +36,19 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Requête de chat avec historique."""
+    """Requete de chat avec historique."""
     message: str = Field(..., min_length=1, max_length=4000)
     history: Optional[List[ChatMessage]] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
-    """Réponse complète du chatbot."""
+    """Reponse complete du chatbot."""
     response: str
     sources: List[Dict]
 
 
 class HealthResponse(BaseModel):
-    """Réponse de santé de l'API."""
+    """Reponse de sante de l'API."""
     status: str
     version: str
     documents_indexed: int
@@ -60,30 +59,32 @@ class HealthResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gestion du cycle de vie de l'application."""
-    logger.info("🚀 Démarrage de l'application Legal RAG Chatbot")
-
-    # Indexation automatique au démarrage si des PDF sont présents
+    logger.info("Demarrage de l'application Legal RAG Chatbot")
+    
+    # Verification que les documents sont deja indexes
     settings = get_settings()
     data_path = os.path.join(settings.data_dir)
-    if os.path.exists(data_path) and any(f.endswith(".pdf") for f in os.listdir(data_path)):
-        logger.info("📚 Indexation automatique des documents PDF...")
-        try:
-            index_documents()
-        except Exception as e:
-            logger.error(f"❌ Erreur lors de l'indexation: {e}")
-    else:
-        logger.info("ℹ️ Aucun PDF à indexer au démarrage")
-
+    chroma = get_chroma_client()
+    
+    try:
+        doc_count = chroma.count()
+        if doc_count == 0:
+            logger.warning("Aucun document indexe. Lancez 'python -m app.indexer' avant de demarrer.")
+        else:
+            logger.info(f"{doc_count} documents deja indexes et prets")
+    except Exception as e:
+        logger.warning(f"Impossible de verifier le nombre de documents: {e}")
+    
     yield
-
-    logger.info("🛑 Arrêt de l'application")
+    
+    logger.info("Arret de l'application")
 
 
 # === Application FastAPI ===
 
 app = FastAPI(
     title="Legal RAG Chatbot",
-    description="Chatbot juridique basé sur le RAG avec Groq et ChromaDB Cloud",
+    description="Chatbot juridique base sur le RAG avec Groq et ChromaDB (stockage local)",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -106,7 +107,7 @@ async def get_index(request: Request):
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """Vérifie l'état de santé de l'application."""
+    """Verifie l'etat de sante de l'application."""
     try:
         chroma = get_chroma_client()
         doc_count = chroma.count()
@@ -123,34 +124,34 @@ async def health_check():
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest):
     """Endpoint de chat avec streaming SSE.
-
-    Retourne la réponse token par token pour une expérience fluide.
+    
+    Retourne la reponse token par token pour une experience fluide.
     """
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message vide")
-
+    
     # Conversion de l'historique
     history = []
     if request.history:
         history = [{"role": msg.role, "content": msg.content} for msg in request.history]
-
+    
     async def event_generator():
-        """Générateur d'événements SSE."""
+        """Generateur d'evenements SSE."""
         try:
             for token in rag_engine.generate_response(
                 query=request.message,
                 conversation_history=history,
             ):
-                # Échapper les retours à la ligne pour SSE
+                # Echapper les retours a la ligne pour SSE
                 safe_token = token.replace("\n", "\\n").replace("\r", "")
                 yield f"data: {safe_token}\n\n"
-
+            
             # Signal de fin
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error(f"Erreur streaming: {e}")
             yield f"data: [ERROR] {str(e)}\n\n"
-
+    
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -164,78 +165,79 @@ async def chat_stream(request: ChatRequest):
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """Endpoint de chat sans streaming (réponse complète).
-
-    Retourne la réponse complète avec les sources.
+    """Endpoint de chat sans streaming (reponse complete).
+    
+    Retourne la reponse complete avec les sources.
     """
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message vide")
-
+    
     # Conversion de l'historique
     history = []
     if request.history:
         history = [{"role": msg.role, "content": msg.content} for msg in request.history]
-
+    
     try:
-        # Génération de la réponse
+        # Generation de la reponse
         response_parts = []
         for token in rag_engine.generate_response(
             query=request.message,
             conversation_history=history,
         ):
             response_parts.append(token)
-
+        
         response_text = "".join(response_parts)
-
-        # Récupération des sources
+        
+        # Recuperation des sources
         sources = rag_engine.get_sources(request.message)
-
+        
         return ChatResponse(
             response=response_text,
             sources=sources,
         )
     except Exception as e:
         logger.error(f"Erreur chat: {e}")
-        raise HTTPException(status_code=500, detail=f"Erreur de génération: {e}")
+        raise HTTPException(status_code=500, detail=f"Erreur de generation: {e}")
 
 
 @app.get("/api/sources")
 async def get_sources(query: str):
-    """Récupère les sources pertinentes pour une requête sans générer de réponse.
-
+    """Recupere les sources pertinentes pour une requete sans generer de reponse.
+    
     Args:
-        query: Texte de la requête
-
+        query: Texte de la requete
+        
     Returns:
-        Liste des sources avec métadonnées
+        Liste des sources avec metadonnees
     """
     if not query.strip():
-        raise HTTPException(status_code=400, detail="Requête vide")
-
+        raise HTTPException(status_code=400, detail="Requete vide")
+    
     try:
         sources = rag_engine.get_sources(query)
         return {"sources": sources}
     except Exception as e:
-        logger.error(f"Erreur récupération sources: {e}")
+        logger.error(f"Erreur recuperation sources: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/index")
 async def trigger_indexing(clear: bool = False):
-    """Déclenche manuellement l'indexation des documents PDF.
-
+    """Declenche manuellement l'indexation des documents PDF.
+    
     Args:
         clear: Si True, vide la collection existante avant indexation
-
+        
     Returns:
         Statut de l'indexation
     """
+    from app.indexer import index_documents
     try:
         index_documents(clear_existing=clear)
         chroma = get_chroma_client()
         return {
             "status": "success",
-            "message": "Indexation terminée",
+            "message": "Indexation terminee",
             "documents_indexed": chroma.count(),
         }
     except Exception as e:
@@ -248,7 +250,7 @@ async def trigger_indexing(clear: bool = False):
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     """Gestionnaire d'erreurs global."""
-    logger.error(f"Erreur non gérée: {exc}")
+    logger.error(f"Erreur non geree: {exc}")
     return HTMLResponse(
         content=f"<h1>Erreur interne</h1><p>{str(exc)}</p>",
         status_code=500,
